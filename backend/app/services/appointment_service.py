@@ -1,6 +1,7 @@
 """
-AppointmentService — Cal.com v2 REST booking.
+AppointmentService — Calendly scheduling-link booking.
 Used for HIGH-band escalations to schedule an urgent clinical review.
+Creates a single-use Calendly scheduling link and returns it as the booking detail.
 No SDK — httpx REST only.
 """
 
@@ -9,15 +10,15 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
 from app.core.constants import (
-    CAL_COM_API_BASE,
-    CAL_COM_API_KEY_ENV,
-    CAL_COM_EVENT_TYPE_ID_ENV,
+    CALENDLY_API_BASE,
+    CALENDLY_API_TOKEN_ENV,
+    CALENDLY_EVENT_TYPE_URI_ENV,
 )
 from app.models.assessment import RiskAssessment
 from app.models.escalation import ActionResult, ActionStatus
@@ -26,23 +27,17 @@ from app.models.vitals import ProcessedReading
 
 logger = logging.getLogger(__name__)
 
-_CAL_API_VERSION = "2024-08-13"
-
 
 class AppointmentService:
-    """Books urgent clinical review appointments via Cal.com REST API."""
+    """Creates Calendly scheduling links for urgent clinical review appointments."""
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        event_type_id: Optional[int] = None,
+        api_token: Optional[str] = None,
+        event_type_uri: Optional[str] = None,
     ) -> None:
-        self._api_key = api_key or os.getenv(CAL_COM_API_KEY_ENV, "")
-        raw_id = event_type_id or os.getenv(CAL_COM_EVENT_TYPE_ID_ENV, "")
-        try:
-            self._event_type_id = int(raw_id) if raw_id else None
-        except (ValueError, TypeError):
-            self._event_type_id = None
+        self._api_token     = api_token or os.getenv(CALENDLY_API_TOKEN_ENV, "")
+        self._event_type_uri = event_type_uri or os.getenv(CALENDLY_EVENT_TYPE_URI_ENV, "")
 
     async def book_urgent_appointment(
         self,
@@ -50,64 +45,49 @@ class AppointmentService:
         assessment: RiskAssessment,
         reasoning: LLMReasoning,
     ) -> ActionResult:
-        """Book an urgent clinical review for a HIGH-band patient via Cal.com."""
+        """Create a Calendly scheduling link for a HIGH-band patient."""
         start = time.monotonic()
 
-        if not self._api_key:
-            logger.warning("Cal.com API key not configured — appointment skipped")
+        if not self._api_token:
+            logger.warning("Calendly API token not configured — appointment skipped")
             return ActionResult(
                 action_type="APPOINTMENT",
                 status=ActionStatus.SKIPPED,
                 latency_ms=0,
-                detail="Cal.com API key not configured",
+                detail="Calendly API token not configured",
             )
 
-        if not self._event_type_id:
-            logger.warning("Cal.com event type ID not configured — appointment skipped")
+        if not self._event_type_uri:
+            logger.warning("Calendly event type URI not configured — appointment skipped")
             return ActionResult(
                 action_type="APPOINTMENT",
                 status=ActionStatus.SKIPPED,
                 latency_ms=0,
-                detail="Cal.com event type ID not configured",
+                detail="Calendly event type URI not configured (set CALENDLY_EVENT_TYPE_URI in .env)",
             )
 
         pid = processed.original.patient_id
-        # Book 30 minutes from now — urgent same-day review
-        slot_start = datetime.now(timezone.utc) + timedelta(minutes=30)
-
         top_syndrome = (
             assessment.sl3.syndromes_fired[0]
             if assessment.sl3.syndromes_fired
             else (assessment.hard_override_type or "High-risk pattern")
         )
 
-        payload = {
-            "eventTypeId": self._event_type_id,
-            "start": slot_start.isoformat(),
-            "responses": {
-                "name": f"Patient {pid}",
-                "email": f"patient-{pid}@sentinel.local",
-                "notes": (
-                    f"SENTINEL HIGH alert — Score {assessment.final_score}/100\n"
-                    f"Primary concern: {top_syndrome}\n"
-                    f"Summary: {reasoning.reasoning_summary[:200]}"
-                ),
-            },
-            "metadata": {
-                "sentinel_patient_id": pid,
-                "sentinel_shal_band": assessment.shal_band.value,
-                "sentinel_score": str(assessment.final_score),
-            },
-        }
+        patient_name  = f"Patient {pid}"
+        patient_email = f"patient-{pid}@sentinel.local"
+        reason        = f"SENTINEL HIGH alert — Score {assessment.final_score:.0f}/100 | {top_syndrome}"
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
-                    f"{CAL_COM_API_BASE}/bookings",
-                    json=payload,
+                    f"{CALENDLY_API_BASE}/scheduling_links",
+                    json={
+                        "max_event_count": 1,
+                        "owner":      self._event_type_uri,
+                        "owner_type": "EventType",
+                    },
                     headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "cal-api-version": _CAL_API_VERSION,
+                        "Authorization": f"Bearer {self._api_token}",
                         "Content-Type": "application/json",
                     },
                 )
@@ -124,19 +104,20 @@ class AppointmentService:
             )
 
         latency = (time.monotonic() - start) * 1000
-        booking_data = data.get("data", data)
-        booking_uid = str(
-            booking_data.get("uid") or booking_data.get("id") or "unknown"
-        )
+
+        booking_url = data["resource"]["booking_url"]
+        # Pre-fill patient details in the Calendly page
+        booking_url += f"?name={quote(patient_name)}&email={quote(patient_email)}"
+        booking_url += f"&a1={quote(reason[:200])}"
 
         logger.info(
-            "ACTION APPOINTMENT → SUCCESS in %.0fms — booking %s",
+            "ACTION APPOINTMENT → SUCCESS in %.0fms — Calendly link: %s",
             latency,
-            booking_uid,
+            booking_url,
         )
         return ActionResult(
             action_type="APPOINTMENT",
             status=ActionStatus.SUCCESS,
             latency_ms=latency,
-            detail=booking_uid,
+            detail=booking_url,
         )

@@ -50,7 +50,7 @@ export interface HealthResponse {
   database: string;
   twilio: string;
   sendgrid: string;
-  cal_com: string;
+  calendly: string;
   ems: string;
 }
 
@@ -208,12 +208,12 @@ export interface BookAppointmentRequest {
   patient_email: string;
   reason: string;
   notes?: string;
-  minutes_from_now?: number;
-  event_type_id?: number;
+  event_type_uri?: string;  // Calendly event type URI
 }
 
 export interface BookAppointmentResponse {
   status: string;
+  booking_url?: string;  // Calendly single-use scheduling link
   booking_id?: string;
   start?: string;
   patient?: string;
@@ -267,17 +267,18 @@ export async function fetchLatestVitals(patientId: string): Promise<LatestVitals
   return res.json();
 }
 
-// ── Cal.com event types ────────────────────────────────────────────────────────
+// ── Calendly event types ───────────────────────────────────────────────────────
 
 export interface CalEventType {
-  id: number;
-  title: string;
+  uri: string;
+  name: string;
+  duration: number;
   slug: string;
-  length: number;
+  color: string;
 }
 
 export async function fetchCalEventTypes(): Promise<{ status: string; event_types: CalEventType[]; detail?: string }> {
-  const res = await fetch(`${BASE}/api/v1/settings/cal-event-types`);
+  const res = await fetch(`${BASE}/api/v1/settings/calendly-event-types`);
   if (!res.ok) return { status: "error", event_types: [], detail: `HTTP ${res.status}` };
   return res.json();
 }
