@@ -4,6 +4,7 @@ export const modules: ModuleMap = {
   "./components/mockups/sentinel/AuditTrail.tsx": () => import("../components/mockups/sentinel/AuditTrail.tsx"),
   "./components/mockups/sentinel/Dashboard.tsx": () => import("../components/mockups/sentinel/Dashboard.tsx"),
   "./components/mockups/sentinel/Login.tsx": () => import("../components/mockups/sentinel/Login.tsx"),
+  "./components/mockups/sentinel/NearbyDoctors.tsx": () => import("../components/mockups/sentinel/NearbyDoctors.tsx"),
   "./components/mockups/sentinel/Settings.tsx": () => import("../components/mockups/sentinel/Settings.tsx"),
   "./components/mockups/sentinel/SystemHealth.tsx": () => import("../components/mockups/sentinel/SystemHealth.tsx")
 };

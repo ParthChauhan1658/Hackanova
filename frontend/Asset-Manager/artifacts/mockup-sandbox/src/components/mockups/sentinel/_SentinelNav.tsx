@@ -59,6 +59,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    key: 'NearbyDoctors',
+    label: 'Nearby Doctors',
+    path: `${BASE}/preview/sentinel/NearbyDoctors`,
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+        <path d="M12 7v6m-3-3h6"/>
+      </svg>
+    ),
+  },
+  {
     key: 'Settings',
     label: 'Settings',
     path: `${BASE}/preview/sentinel/Settings`,

@@ -51,6 +51,7 @@ export interface HealthResponse {
   twilio: string;
   sendgrid: string;
   calendly: string;
+  serp_api: string;
   ems: string;
 }
 
@@ -280,5 +281,72 @@ export interface CalEventType {
 export async function fetchCalEventTypes(): Promise<{ status: string; event_types: CalEventType[]; detail?: string }> {
   const res = await fetch(`${BASE}/api/v1/settings/calendly-event-types`);
   if (!res.ok) return { status: "error", event_types: [], detail: `HTTP ${res.status}` };
+  return res.json();
+}
+
+// ── Nearby Doctors (OSM + SerpAPI) ────────────────────────────────────────────
+
+export interface ScoreBreakdown {
+  proximity: number;
+  rating: number;
+  specialization: number;
+  completeness: number;
+}
+
+export interface NearbyDoctor {
+  name: string;
+  amenity_type: string;
+  amenity_label: string;
+  specialization: string;
+  address: string;
+  phone: string;
+  website: string;
+  opening_hours: string;
+  wheelchair_accessible: boolean;
+  lat: number;
+  lng: number;
+  osm_id: string;
+  osm_url: string;
+  google_maps_url: string;
+  distance_km: number;
+  rating: number | null;
+  reviews_count: number | null;
+  score: number;
+  score_breakdown: ScoreBreakdown;
+}
+
+export interface NearbyDoctorsResponse {
+  patient_location: { lat: number; lng: number };
+  radius_m: number;
+  syndromes: string[];
+  relevant_specialties: string[];
+  total_found: number;
+  ranked_doctors: NearbyDoctor[];
+  fetch_time_ms: number;
+  source: string;
+  serp_enriched: boolean;
+  osm_cache_hit: boolean;
+}
+
+export async function fetchNearbyDoctors(params: {
+  patient_id?: string;
+  lat?: number;
+  lng?: number;
+  radius_m?: number;
+  syndromes?: string[];
+  limit?: number;
+}): Promise<NearbyDoctorsResponse> {
+  const p = new URLSearchParams();
+  if (params.patient_id)       p.set("patient_id", params.patient_id);
+  if (params.lat != null)      p.set("lat", String(params.lat));
+  if (params.lng != null)      p.set("lng", String(params.lng));
+  if (params.radius_m != null) p.set("radius_m", String(params.radius_m));
+  if (params.syndromes?.length) p.set("syndromes", params.syndromes.join(","));
+  if (params.limit != null)    p.set("limit", String(params.limit));
+  const res = await fetch(`${BASE}/api/v1/doctors/nearby?${p}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `Nearby doctors: ${res.status}`);
+  }
   return res.json();
 }

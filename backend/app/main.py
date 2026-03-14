@@ -21,6 +21,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import audit as audit_router
+from app.api.routes import doctors as doctors_router
 from app.api.routes import settings as settings_router
 from app.api.routes import simulator as simulator_router
 from app.api.routes import vitals as vitals_router
@@ -183,6 +184,7 @@ app.include_router(vitals_router.router)
 app.include_router(simulator_router.router)
 app.include_router(audit_router.router)
 app.include_router(settings_router.router)
+app.include_router(doctors_router.router)
 
 
 @app.get("/health")
@@ -207,5 +209,6 @@ async def health(request: Request):
         "twilio":           "configured" if os.getenv("TWILIO_ACCOUNT_SID") else "missing_key",
         "sendgrid":         "configured" if os.getenv("RESEND_API_KEY") else "missing_key",
         "calendly":         "configured" if os.getenv("CALENDLY_API_TOKEN") else "missing_key",
+        "serp_api":         "configured" if os.getenv("SERP_API_KEY") else "osm_only",
         "ems":              "mock" if not os.getenv("EMS_API_URL") else "configured",
     }
