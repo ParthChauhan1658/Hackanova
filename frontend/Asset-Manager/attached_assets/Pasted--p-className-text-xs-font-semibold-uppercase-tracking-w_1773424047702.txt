@@ -1,0 +1,1009 @@
+ <p className="text-xs font-semibold uppercase tracking-widest text-[oklch(0.85_0.06_100)] mb-3">
+          AI Differentials
+          <span className="ml-2 text-[oklch(0.72_0.17_145)]">{Math.round(confidence * 100)}% conf.</span>
+        </p>
+        <div className="space-y-2">
+          {differentials.slice(0, 4).map((d, i) => (
+            <motion.div
+              key={d.diagnosis}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.07 }}
+              className="flex items-center gap-2"
+            >
+              <span className="flex-1 text-xs text-[oklch(0.93_0.03_85)] truncate">{d.diagnosis}</span>
+              <div className="w-20 h-1.5 rounded-full bg-[oklch(1_0_0_/_0.07)] overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full bg-[oklch(0.72_0.17_145)]"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${d.probability * 100}%` }}
+                  transition={{ duration: 0.9, delay: i * 0.07 }}
+                />
+              </div>
+              <span className="text-xs font-mono text-[oklch(0.72_0.17_145)] w-8 text-right">{Math.round(d.probability * 100)}%</span>
+            </motion.div>
+          ))}
+        </div>
+      </GlassCard>
+    )
+  }
+
+  // Sub-section 6: Typewriter Narrative
+  function NarrativeSummary({ text }: { text: string }) {
+    const [displayed, setDisplayed] = useState('')
+    const [idx, setIdx] = useState(0)
+
+    useEffect(() => {
+      setDisplayed('')
+      setIdx(0)
+    }, [text])
+
+    useEffect(() => {
+      if (idx < text.length) {
+        const t = setTimeout(() => {
+          setDisplayed(prev => prev + text[idx])
+          setIdx(i => i + 1)
+        }, 18)
+        return () => clearTimeout(t)
+      }
+    }, [idx, text])
+
+    return (
+      <GlassCard className="p-4 col-span-2">
+        <p className="text-xs font-semibold uppercase tracking-widest text-[oklch(0.85_0.06_100)] mb-3">Clinical Narrative</p>
+        <p className="text-sm text-[oklch(0.93_0.03_85)] leading-relaxed font-mono min-h-[3rem]">
+          {displayed}
+          <motion.span
+            animate={{ opacity: [1, 0, 1] }}
+            transition={{ duration: 0.9, repeat: Infinity }}
+            className="inline-block w-0.5 h-4 bg-[oklch(0.72_0.17_145)] ml-0.5 align-middle"
+          />
+        </p>
+      </GlassCard>
+    )
+  }
+
+  // Main XAI Panel
+  export function XAIPanel({ data }: { data: XAIData | null }) {
+    if (!data) {
+      return (
+        <GlassCard className="p-6 text-center">
+          <p className="text-sm text-[oklch(0.50_0.03_165)]">No assessment data — run simulator or ingest vitals</p>
+        </GlassCard>
+      )
+    }
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 mb-4">
+          <h2 className="text-base font-bold text-[oklch(0.93_0.03_85)] tracking-tight">Explainable AI — Why This Alert?</h2>
+          <Badge
+            className={
+              data.shalBand === 'CRITICAL' ? 'bg-[oklch(0.55_0.25_25)] text-white animate-pulse' :
+              data.shalBand === 'HIGH'     ? 'bg-[oklch(0.65_0.22_25_/_0.7)] text-white' :
+              'bg-[oklch(0.72_0.17_145_/_0.4)] text-white'
+            }
+          >
+            {data.shalBand} · {data.finalScore.toFixed(1)}
+          </Badge>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <ScoreWaterfall data={data} />
+          <VitalTriggers triggers={data.vitalTriggers} />
+          <ClinicalSyndromes syndromes={data.syndromes} />
+          <DeteriorationTrends trends={data.trends} />
+          <ReasoningChain differentials={data.differentials} confidence={data.confidence} />
+          <NarrativeSummary text={data.reasoning} />
+        </div>
+      </div>
+    )
+  }
+
+  ════════════════════════════════════════════════════════════════════
+  PAGE 1 — DASHBOARD  (src/app/dashboard/page.tsx — REWRITE)
+  ════════════════════════════════════════════════════════════════════
+  Premium layout: full-viewport, particles behind, glass cards floating.
+
+  'use client'
+  import { useState, useEffect } from 'react'
+  import { motion } from 'framer-motion'
+  import { StaggerList, StaggerItem } from '@/components/motion/stagger-list'
+  import { GlassCard } from '@/components/ui/glass-card'
+  import { RiskOrb } from '@/components/3d/risk-orb'
+  import { HealthMap } from '@/components/3d/health-map'
+  import { XAIPanel } from '@/components/xai/xai-panel'
+  import { VitalCard } from '@/components/vitals/vital-card'
+  import { RiskGauge } from '@/components/vitals/risk-gauge'
+  import { ECGStrip } from '@/components/vitals/ecg-strip'
+  import { EmergencyAlert } from '@/components/vitals/emergency-alert'
+  import { DecisionLog } from '@/components/vitals/decision-log'
+  import { useVitalsStore } from '@/store/vitals-store'
+  import { useSentinelWS } from '@/hooks/use-sentinel-ws'
+  import { Badge } from '@/components/ui/badge'
+  import { Activity, Brain, Zap, Shield } from 'lucide-react'
+
+  export default function DashboardPage() {
+    const { currentVitals, currentAssessment, decisionLog, sentinelBackendMode, activePatientId } = useVitalsStore()
+    const [xaiData, setXaiData] = useState(null)
+
+    // WebSocket (SENTINEL backend mode)
+    useSentinelWS(sentinelBackendMode ? activePatientId : null, (msg: any) => {
+      if (msg?.assessment) {
+        const a = msg.assessment
+        setXaiData({
+          finalScore: a.final_score,
+          shalBand: a.shal_band,
+          sl1Points: a.sl1?.normalised_points ?? 0,
+          sl2Points: a.sl2?.additive_points ?? 0,
+          sl3Points: a.sl3?.total_points ?? 0,
+          sl4Points: a.sl4?.total_points ?? 0,
+          sl5Points: a.sl5?.points_added ?? 0,
+          vitalTriggers: Object.entries(a.sl1?.vital_scores ?? {}).map(([name, value]) => ({
+            name, value: value as number, threshold: 0, delta: (value as number) - 0,
+          })),
+          syndromes: a.sl3?.syndromes_fired ?? [],
+          trends: a.sl4?.trends_fired ?? [],
+          differentials: msg.reasoning?.differential_diagnoses?.map((d: any) => ({
+            diagnosis: d.diagnosis, probability: d.probability,
+          })) ?? [],
+          reasoning: msg.reasoning?.reasoning_summary ?? a.xai_narrative ?? '',
+          confidence: msg.reasoning?.confidence ?? 0,
+        })
+      }
+    })
+
+    const riskScore = currentAssessment?.score ?? 0
+
+    return (
+      <div className="min-h-screen relative" style={{ zIndex: 1 }}>
+        {/* Top status bar */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="sticky top-0 z-50 flex items-center justify-between px-6 py-3
+                     bg-[oklch(0.20_0.05_165_/_0.85)] backdrop-blur-2xl
+                     border-b border-[oklch(1_0_0_/_0.06)]"
+        >
+          <div className="flex items-center gap-3">
+            <Shield className="w-5 h-5 text-[oklch(0.72_0.17_145)]" />
+            <span className="font-bold text-[oklch(0.93_0.03_85)] tracking-wider text-sm">SENTINEL</span>
+            <Badge className="bg-[oklch(0.72_0.17_145_/_0.25)] text-[oklch(0.72_0.17_145)] text-xs border-[oklch(0.72_0.17_145_/_0.3)]">
+              Clinical Escalation Agent
+            </Badge>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-[oklch(0.50_0.03_165)]">
+            <span className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${sentinelBackendMode ? 'bg-[oklch(0.72_0.17_145)] animate-pulse' : 'bg-[oklch(0.50_0.03_165)]'}`} 
+  />
+              {sentinelBackendMode ? 'SENTINEL Live' : 'Simulation Mode'}
+            </span>
+          </div>
+        </motion.div>
+
+        <div className="p-6 space-y-6">
+          {/* Emergency alert banner */}
+          <EmergencyAlert />
+
+          {/* Hero row: 3D orb + risk gauge + ECG */}
+          <StaggerList className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <StaggerItem>
+              <GlassCard glow={riskScore > 70 ? 'red' : riskScore > 50 ? 'amber' : 'green'} className="p-6 flex flex-col items-center">
+                <p className="text-xs uppercase tracking-widest text-[oklch(0.85_0.06_100)] mb-4">Risk Index</p>
+                <RiskOrb riskScore={riskScore} size={220} />
+                <motion.div
+                  className="mt-4 text-center"
+                  animate={{ scale: riskScore > 80 ? [1, 1.04, 1] : 1 }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                >
+                  <span className="text-5xl font-black text-[oklch(0.93_0.03_85)]">{riskScore.toFixed(0)}</span>
+                  <span className="text-lg text-[oklch(0.50_0.03_165)] ml-1">/100</span>
+                </motion.div>
+                <Badge className={
+                  riskScore >= 80 ? 'mt-2 bg-[oklch(0.55_0.25_25)] text-white animate-pulse' :
+                  riskScore >= 70 ? 'mt-2 bg-[oklch(0.65_0.22_25_/_0.7)] text-white' :
+                  riskScore >= 50 ? 'mt-2 bg-[oklch(0.7_0.15_60_/_0.6)] text-white' :
+                  'mt-2 bg-[oklch(0.72_0.17_145_/_0.4)] text-white'
+                }>
+                  {currentAssessment?.band ?? 'NOMINAL'}
+                </Badge>
+              </GlassCard>
+            </StaggerItem>
+
+            <StaggerItem>
+              <GlassCard className="p-6 h-full">
+                <p className="text-xs uppercase tracking-widest text-[oklch(0.85_0.06_100)] mb-4">Vital Network</p>
+                <HealthMap vitals={{
+                  hr: (currentVitals?.heartRate ?? 72) / 1.2,
+                  spo2: 100 - (currentVitals?.spo2 ?? 98),
+                }} />
+              </GlassCard>
+            </StaggerItem>
+
+            <StaggerItem>
+              <GlassCard className="p-6 h-full flex flex-col gap-4">
+                <p className="text-xs uppercase tracking-widest text-[oklch(0.85_0.06_100)]">Live ECG</p>
+                <ECGStrip />
+                <div className="grid grid-cols-2 gap-2 mt-auto">
+                  <div className="text-center">
+                    <p className="text-xs text-[oklch(0.50_0.03_165)]">HR</p>
+                    <motion.p
+                      key={currentVitals?.heartRate}
+                      initial={{ scale: 1.2, color: '#ef4444' }}
+                      animate={{ scale: 1, color: 'oklch(0.93 0.03 85)' }}
+                      transition={{ duration: 0.4 }}
+                      className="text-2xl font-bold text-[oklch(0.93_0.03_85)]"
+                    >
+                      {currentVitals?.heartRate ?? '--'}
+                    </motion.p>
+                    <p className="text-xs text-[oklch(0.50_0.03_165)]">bpm</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-[oklch(0.50_0.03_165)]">SpO₂</p>
+                    <motion.p
+                      key={currentVitals?.spo2}
+                      initial={{ scale: 1.2 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.4 }}
+                      className="text-2xl font-bold text-[oklch(0.72_0.17_145)]"
+                    >
+                      {currentVitals?.spo2 ?? '--'}%
+                    </motion.p>
+                  </div>
+                </div>
+              </GlassCard>
+            </StaggerItem>
+          </StaggerList>
+
+          {/* Vital cards row */}
+          <StaggerList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {[
+              { label: 'Heart Rate',   value: currentVitals?.heartRate,   unit: 'bpm',  icon: Activity, normal: [60,100] },
+              { label: 'Resp Rate',    value: currentVitals?.respiratoryRate, unit: '/min', icon: Zap, normal: [12,20] },
+              { label: 'SpO₂',         value: currentVitals?.spo2,          unit: '%',   icon: Activity, normal: [95,100] },
+              { label: 'Temperature',  value: currentVitals?.bodyTemperature, unit: '°C',  icon: Activity, normal: [36,37.5] },
+              { label: 'HRV',          value: currentVitals?.hrv,            unit: 'ms',  icon: Brain, normal: [20,80] },
+            ].map((v, i) => (
+              <StaggerItem key={v.label}>
+                <VitalCard {...v} />
+              </StaggerItem>
+            ))}
+          </StaggerList>
+
+          {/* XAI Panel */}
+          <XAIPanel data={xaiData} />
+
+          {/* Decision log */}
+          <GlassCard className="p-5">
+            <p className="text-xs uppercase tracking-widest text-[oklch(0.85_0.06_100)] mb-4">Decision Log</p>
+            <DecisionLog />
+          </GlassCard>
+        </div>
+      </div>
+    )
+  }
+
+  ════════════════════════════════════════════════════════════════════
+  PAGE 2 — AUDIT TRAIL  (src/app/audit/page.tsx — CREATE)
+  ════════════════════════════════════════════════════════════════════
+  'use client'
+  import { useState, useEffect } from 'react'
+  import { motion, AnimatePresence } from 'framer-motion'
+  import { GlassCard } from '@/components/ui/glass-card'
+  import { StaggerList, StaggerItem } from '@/components/motion/stagger-list'
+  import { Badge } from '@/components/ui/badge'
+  import { Input } from '@/components/ui/input'
+  import { sentinel } from '@/lib/sentinel-api'
+  import { Search, Filter, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react'
+
+  const MOCK_AUDIT = Array.from({ length: 20 }, (_, i) => ({
+    id: i + 1,
+    patient_id: `P00${(i % 3) + 1}`,
+    timestamp: new Date(Date.now() - i * 180000).toISOString(),
+    escalation_path: ['CRITICAL','HIGH','FALL','NONE'][i % 4],
+    final_score: 40 + Math.random() * 55,
+    shal_band: ['CRITICAL','HIGH','WARNING','NOMINAL'][i % 4],
+    actions_taken: ['EMS','SMS','EMAIL'].slice(0, (i % 3) + 1),
+    all_succeeded: Math.random() > 0.2,
+    reasoning_summary: 'Patient showed deteriorating SpO₂ trend combined with elevated respiratory rate suggesting early respiratory failure.',
+  }))
+
+  const pathColors: Record<string, string> = {
+    CRITICAL: 'bg-[oklch(0.55_0.25_25)] text-white animate-pulse',
+    HIGH:     'bg-[oklch(0.65_0.22_25_/_0.7)] text-white',
+    FALL:     'bg-[oklch(0.65_0.18_240_/_0.6)] text-white',
+    NONE:     'bg-[oklch(0.50_0.03_165_/_0.5)] text-[oklch(0.93_0.03_85)]',
+  }
+
+  export default function AuditPage() {
+    const [entries, setEntries] = useState<typeof MOCK_AUDIT>([])
+    const [search, setSearch] = useState('')
+    const [filter, setFilter] = useState('ALL')
+    const [expanded, setExpanded] = useState<number | null>(null)
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+      sentinel.getAuditLog(50, 0)
+        .then((data) => setEntries(Array.isArray(data) ? data : MOCK_AUDIT))
+        .catch(() => setEntries(MOCK_AUDIT))
+        .finally(() => setLoading(false))
+    }, [])
+
+    const filtered = entries.filter(e =>
+      (filter === 'ALL' || e.escalation_path === filter) &&
+      (e.patient_id.toLowerCase().includes(search.toLowerCase()) || e.escalation_path.toLowerCase().includes(search.toLowerCase()))
+    )
+
+    return (
+      <div className="min-h-screen p-6 space-y-6" style={{ zIndex: 1 }}>
+        {/* Header */}
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-black text-[oklch(0.93_0.03_85)] tracking-tight">Audit Trail</h1>
+            <p className="text-sm text-[oklch(0.50_0.03_165)] mt-0.5">Immutable escalation log — all actions recorded</p>
+          </div>
+          <Badge className="bg-[oklch(0.72_0.17_145_/_0.25)] text-[oklch(0.72_0.17_145)] border-[oklch(0.72_0.17_145_/_0.3)]">
+            {filtered.length} entries
+          </Badge>
+        </motion.div>
+
+        {/* Filters */}
+        <GlassCard className="p-4 flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[oklch(0.50_0.03_165)]" />
+            <Input
+              className="pl-9 bg-transparent border-[oklch(1_0_0_/_0.1)] text-[oklch(0.93_0.03_85)] placeholder:text-[oklch(0.50_0.03_165)]"
+              placeholder="Search patient ID or path..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            {['ALL','CRITICAL','HIGH','FALL','NONE'].map(f => (
+              <motion.button
+                key={f}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  filter === f
+                    ? 'bg-[oklch(0.72_0.17_145)] text-white shadow-lg'
+                    : 'bg-[oklch(1_0_0_/_0.06)] text-[oklch(0.85_0.06_100)] hover:bg-[oklch(1_0_0_/_0.1)]'
+                }`}
+              >
+                {f}
+              </motion.button>
+            ))}
+          </div>
+        </GlassCard>
+
+        {/* Entries */}
+        <StaggerList className="space-y-2">
+          {filtered.map(entry => (
+            <StaggerItem key={entry.id}>
+              <GlassCard
+                hover={false}
+                className="overflow-hidden cursor-pointer"
+                onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}
+              >
+                <div className="p-4 flex items-center gap-4">
+                  {entry.all_succeeded
+                    ? <CheckCircle2 className="w-5 h-5 text-[oklch(0.72_0.17_145)] shrink-0" />
+                    : <AlertTriangle className="w-5 h-5 text-[oklch(0.65_0.22_25)] shrink-0" />
+                  }
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm text-[oklch(0.93_0.03_85)]">{entry.patient_id}</span>
+                      <Badge className={pathColors[entry.escalation_path] ?? ''}>{entry.escalation_path}</Badge>
+                      <span className="text-xs text-[oklch(0.72_0.17_145)] font-mono">
+                        Score {entry.final_score.toFixed(1)}
+                      </span>
+                      {entry.actions_taken?.map((a: string) => (
+                        <Badge key={a} className="bg-[oklch(1_0_0_/_0.06)] text-[oklch(0.85_0.06_100)] text-xs">{a}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-[oklch(0.50_0.03_165)] shrink-0">
+                    <Clock className="w-3.5 h-3.5" />
+                    {new Date(entry.timestamp).toLocaleTimeString()}
+                  </div>
+                </div>
+                <AnimatePresence>
+                  {expanded === entry.id && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3 }}
+                      className="overflow-hidden border-t border-[oklch(1_0_0_/_0.06)] bg-[oklch(1_0_0_/_0.02)]"
+                    >
+                      <p className="p-4 text-sm text-[oklch(0.85_0.06_100)] leading-relaxed font-mono">
+                        {entry.reasoning_summary}
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </GlassCard>
+            </StaggerItem>
+          ))}
+        </StaggerList>
+      </div>
+    )
+  }
+
+  ════════════════════════════════════════════════════════════════════
+  PAGE 3 — SYSTEM HEALTH  (src/app/system-health/page.tsx — CREATE)
+  ════════════════════════════════════════════════════════════════════
+  'use client'
+  import { useState, useEffect } from 'react'
+  import { motion } from 'framer-motion'
+  import { GlassCard } from '@/components/ui/glass-card'
+  import { StaggerList, StaggerItem } from '@/components/motion/stagger-list'
+  import { Badge } from '@/components/ui/badge'
+  import { sentinel } from '@/lib/sentinel-api'
+  import { CheckCircle2, XCircle, AlertCircle, RefreshCw, Database, Cpu, Wifi, Bell } from 'lucide-react'
+
+  const SERVICE_ICONS: Record<string, React.ElementType> = {
+    redis: Wifi, isolation_forest: Cpu, claude_api: Cpu,
+    gemini_api: Cpu, database: Database, twilio: Bell,
+    sendgrid: Bell, cal_com: Bell, ems: AlertCircle,
+  }
+
+  const MOCK_HEALTH = {
+    status: 'ok', redis: 'connected', isolation_forest: 'loaded',
+    claude_api: 'configured', gemini_api: 'configured', database: 'configured',
+    twilio: 'configured', sendgrid: 'configured', cal_com: 'configured', ems: 'mock',
+  }
+
+  export default function SystemHealthPage() {
+    const [health, setHealth] = useState<typeof MOCK_HEALTH | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [lastRefresh, setLastRefresh] = useState(new Date())
+
+    const refresh = () => {
+      setLoading(true)
+      sentinel.health()
+        .then(setHealth)
+        .catch(() => setHealth(MOCK_HEALTH))
+        .finally(() => { setLoading(false); setLastRefresh(new Date()) })
+    }
+
+    useEffect(() => { refresh() }, [])
+
+    const statusColor = (val: string) =>
+      val === 'connected' || val === 'loaded' || val === 'configured' || val === 'ok'
+        ? 'green' : val === 'mock' ? 'amber' : 'red'
+
+    return (
+      <div className="min-h-screen p-6 space-y-6" style={{ zIndex: 1 }}>
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-black text-[oklch(0.93_0.03_85)] tracking-tight">System Health</h1>
+            <p className="text-sm text-[oklch(0.50_0.03_165)] mt-0.5">
+              Last checked: {lastRefresh.toLocaleTimeString()}
+            </p>
+          </div>
+          <motion.button
+            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+            onClick={refresh}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[oklch(0.72_0.17_145_/_0.25)] text-[oklch(0.72_0.17_145)] text-sm font-semibold  
+  border border-[oklch(0.72_0.17_145_/_0.3)]"
+          >
+            <motion.div animate={loading ? { rotate: 360 } : {}} transition={{ duration: 1, repeat: loading ? Infinity : 0, ease: 'linear' }}>
+              <RefreshCw className="w-4 h-4" />
+            </motion.div>
+            Refresh
+          </motion.button>
+        </motion.div>
+
+        {/* Overall status banner */}
+        {health && (
+          <GlassCard glow={health.status === 'ok' ? 'green' : 'red'} className="p-5 flex items-center gap-4">
+            {health.status === 'ok'
+              ? <CheckCircle2 className="w-8 h-8 text-[oklch(0.72_0.17_145)]" />
+              : <XCircle className="w-8 h-8 text-[oklch(0.55_0.25_25)]" />
+            }
+            <div>
+              <p className="font-bold text-lg text-[oklch(0.93_0.03_85)]">
+                {health.status === 'ok' ? 'All Systems Operational' : 'Degraded Service'}
+              </p>
+              <p className="text-sm text-[oklch(0.50_0.03_165)]">SENTINEL backend · FastAPI + Redis + PostgreSQL</p>
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Service grid */}
+        <StaggerList className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {health && Object.entries(health).filter(([k]) => k !== 'status').map(([service, val]) => {
+            const Icon = SERVICE_ICONS[service] ?? AlertCircle
+            const sc = statusColor(val as string)
+            return (
+              <StaggerItem key={service}>
+                <GlassCard glow={sc as any} className="p-5 flex items-center gap-4">
+                  <div className={`p-3 rounded-2xl ${
+                    sc === 'green' ? 'bg-[oklch(0.72_0.17_145_/_0.2)]' :
+                    sc === 'amber' ? 'bg-[oklch(0.65_0.22_25_/_0.2)]' :
+                    'bg-[oklch(0.55_0.25_25_/_0.2)]'
+                  }`}>
+                    <Icon className={`w-5 h-5 ${
+                      sc === 'green' ? 'text-[oklch(0.72_0.17_145)]' :
+                      sc === 'amber' ? 'text-[oklch(0.65_0.22_25)]' :
+                      'text-[oklch(0.55_0.25_25)]'
+                    }`} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-[oklch(0.93_0.03_85)] capitalize">
+                      {service.replace(/_/g, ' ')}
+                    </p>
+                    <Badge className={
+                      sc === 'green' ? 'mt-1 bg-[oklch(0.72_0.17_145_/_0.2)] text-[oklch(0.72_0.17_145)] border-[oklch(0.72_0.17_145_/_0.3)]' :
+                      sc === 'amber' ? 'mt-1 bg-[oklch(0.65_0.22_25_/_0.2)] text-[oklch(0.65_0.22_25)] border-[oklch(0.65_0.22_25_/_0.3)]' :
+                      'mt-1 bg-[oklch(0.55_0.25_25_/_0.2)] text-[oklch(0.55_0.25_25)] border-[oklch(0.55_0.25_25_/_0.3)]'
+                    }>
+                      {val as string}
+                    </Badge>
+                  </div>
+                </GlassCard>
+              </StaggerItem>
+            )
+          })}
+        </StaggerList>
+
+        {/* Connection info */}
+        <GlassCard className="p-5">
+          <p className="text-xs uppercase tracking-widest text-[oklch(0.85_0.06_100)] mb-4">Connection Details</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-mono text-sm">
+            {[
+              { label: 'Backend API',   value: 'http://localhost:8000' },
+              { label: 'WebSocket',     value: 'ws://localhost:8000/ws/vitals/{patientId}' },
+              { label: 'PostgreSQL',    value: 'postgresql+asyncpg://localhost:5432/netrika' },
+              { label: 'Redis',         value: 'redis://localhost:6379/0' },
+            ].map(({ label, value }) => (
+              <div key={label} className="flex flex-col gap-1">
+                <span className="text-xs text-[oklch(0.50_0.03_165)]">{label}</span>
+                <span className="text-[oklch(0.72_0.17_145)] text-xs truncate">{value}</span>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      </div>
+    )
+  }
+
+  ════════════════════════════════════════════════════════════════════
+  PAGE 4 — SIMULATOR  (src/app/simulator/page.tsx — ENHANCE existing)
+  ════════════════════════════════════════════════════════════════════
+  Keep the existing SimulationControls component. Wrap the page with the premium glass layout:
+
+  'use client'
+  import { motion } from 'framer-motion'
+  import { GlassCard } from '@/components/ui/glass-card'
+  import { StaggerList, StaggerItem } from '@/components/motion/stagger-list'
+  import { SimulationControls } from '@/components/vitals/simulation-controls'
+  import { VitalsPanel } from '@/components/vitals/vitals-panel'
+  import { SleepWidget } from '@/components/vitals/sleep-widget'
+  import { Play, Pause, Settings2 } from 'lucide-react'
+
+  export default function SimulatorPage() {
+    return (
+      <div className="min-h-screen p-6 space-y-6" style={{ zIndex: 1 }}>
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}>
+          <h1 className="text-2xl font-black text-[oklch(0.93_0.03_85)] tracking-tight">Data Simulator</h1>
+          <p className="text-sm text-[oklch(0.50_0.03_165)] mt-0.5">Inject synthetic vitals to exercise the full SENTINEL pipeline</p>
+        </motion.div>
+
+        <StaggerList className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <StaggerItem className="lg:col-span-2">
+            <GlassCard className="p-5">
+              <SimulationControls />
+            </GlassCard>
+          </StaggerItem>
+          <StaggerItem>
+            <GlassCard className="p-5">
+              <SleepWidget />
+            </GlassCard>
+          </StaggerItem>
+        </StaggerList>
+
+        <GlassCard className="p-5">
+          <VitalsPanel />
+        </GlassCard>
+      </div>
+    )
+  }
+
+  ════════════════════════════════════════════════════════════════════
+  CRITICAL ALERT OVERLAY  (src/components/overlays/critical-overlay.tsx)
+  ════════════════════════════════════════════════════════════════════
+  'use client'
+  import { motion, AnimatePresence } from 'framer-motion'
+  import { useVitalsStore } from '@/store/vitals-store'
+  import { AlertOctagon, Phone, X } from 'lucide-react'
+  import { sentinel } from '@/lib/sentinel-api'
+
+  export function CriticalOverlay() {
+    const { currentAssessment, dismissCritical } = useVitalsStore()
+    const isCritical = currentAssessment?.band === 'CRITICAL' && !currentAssessment?.dismissed
+
+    return (
+      <AnimatePresence>
+        {isCritical && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6"
+          >
+            {/* Backdrop with pulsing red tint */}
+            <motion.div
+              className="absolute inset-0 bg-[oklch(0.55_0.25_25_/_0.25)] backdrop-blur-sm"
+              animate={{ opacity: [0.2, 0.4, 0.2] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            />
+
+            {/* Alert card */}
+            <motion.div
+              initial={{ scale: 0.8, y: 30 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 30 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="relative rounded-3xl border-2 border-[oklch(0.55_0.25_25)] bg-[oklch(0.18_0.05_25_/_0.95)] backdrop-blur-2xl p-8 max-w-md      
+  w-full text-center shadow-[0_0_80px_-10px_oklch(0.55_0.25_25)]"
+            >
+              <motion.div
+                animate={{ scale: [1, 1.15, 1] }}
+                transition={{ duration: 1.2, repeat: Infinity }}
+                className="flex justify-center mb-4"
+              >
+                <AlertOctagon className="w-16 h-16 text-[oklch(0.55_0.25_25)]" />
+              </motion.div>
+              <h2 className="text-2xl font-black text-white mb-2">CRITICAL ALERT</h2>
+              <p className="text-[oklch(0.85_0.06_100)] text-sm mb-1">Patient {currentAssessment?.patientId}</p>
+              <p className="text-[oklch(0.55_0.25_25)] text-3xl font-black mb-1">
+                Score {currentAssessment?.score?.toFixed(0)}
+              </p>
+              <p className="text-[oklch(0.85_0.06_100)] text-sm mb-6">EMS + notifications dispatched</p>
+
+              <div className="flex gap-3">
+                <motion.button
+                  whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                  onClick={() => dismissCritical?.()}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-[oklch(0.55_0.25_25)] text-white font-bold"
+                >
+                  <X className="w-4 h-4" /> Acknowledge
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-[oklch(1_0_0_/_0.2)] text-white"
+                >
+                  <Phone className="w-4 h-4" />
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    )
+  }
+
+  Add    inside  src/app/layout.tsx  after  .
+
+  ════════════════════════════════════════════════════════════════════
+  FALL PROTOCOL OVERLAY  (src/components/overlays/fall-overlay.tsx)
+  ════════════════════════════════════════════════════════════════════
+  'use client'
+  import { useState, useEffect } from 'react'
+  import { motion, AnimatePresence } from 'framer-motion'
+  import { useVitalsStore } from '@/store/vitals-store'
+  import { PersonStanding, CheckCircle2, Timer } from 'lucide-react'
+  import { sentinel } from '@/lib/sentinel-api'
+
+  export function FallOverlay() {
+    const { currentVitals, activePatientId } = useVitalsStore()
+    const [visible, setVisible] = useState(false)
+    const [countdown, setCountdown] = useState(60)
+    const [acknowledged, setAcknowledged] = useState(false)
+
+    useEffect(() => {
+      if (currentVitals?.fallEvent === 'POSSIBLE_FALL' || currentVitals?.fallEvent === 'CONFIRMED_FALL') {
+        setVisible(true); setCountdown(60); setAcknowledged(false)
+      }
+    }, [currentVitals?.fallEvent])
+
+    useEffect(() => {
+      if (!visible || acknowledged) return
+      const t = setInterval(() => setCountdown(c => { if (c <= 1) { clearInterval(t); return 0 } return c - 1 }), 1000)
+      return () => clearInterval(t)
+    }, [visible, acknowledged])
+
+    const handleAcknowledge = async () => {
+      if (activePatientId) await sentinel.acknowledgeFall(activePatientId)
+      setAcknowledged(true)
+      setTimeout(() => setVisible(false), 2000)
+    }
+
+    return (
+      <AnimatePresence>
+        {visible && (
+          <motion.div
+            initial={{ opacity: 0, x: '100%' }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: '100%' }}
+            transition={{ type: 'spring', stiffness: 280, damping: 28 }}
+            className="fixed bottom-6 right-6 z-[90] w-80 rounded-3xl border border-[oklch(0.65_0.18_240_/_0.4)] bg-[oklch(0.20_0.06_240_/_0.92)]       
+  backdrop-blur-2xl p-5 shadow-[0_0_40px_-8px_oklch(0.65_0.18_240)]"
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <motion.div animate={{ rotate: [0, -10, 10, 0] }} transition={{ duration: 0.6, repeat: 3 }}>
+                <PersonStanding className="w-7 h-7 text-[oklch(0.65_0.18_240)]" />
+              </motion.div>
+              <div>
+                <p className="font-bold text-white text-sm">Fall Detected</p>
+                <p className="text-xs text-[oklch(0.85_0.06_100)]">
+                  {currentVitals?.fallEvent === 'CONFIRMED_FALL' ? 'CONFIRMED — EMS pending' : 'Possible fall — monitoring'}
+                </p>
+              </div>
+            </div>
+
+            {!acknowledged && (
+              <div className="mb-3">
+                <div className="flex justify-between text-xs text-[oklch(0.85_0.06_100)] mb-1">
+                  <span className="flex items-center gap-1"><Timer className="w-3 h-3" /> EMS in</span>
+                  <span className={countdown < 15 ? 'text-[oklch(0.55_0.25_25)] font-bold' : ''}>{countdown}s</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-[oklch(1_0_0_/_0.1)] overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full bg-[oklch(0.65_0.18_240)]"
+                    animate={{ width: `${(countdown / 60) * 100}%` }}
+                    transition={{ duration: 1 }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {acknowledged
+              ? (
+                <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="flex items-center gap-2 text-[oklch(0.72_0.17_145)] text-sm      
+  font-semibold">
+                  <CheckCircle2 className="w-5 h-5" /> Acknowledged — EMS cancelled
+                </motion.div>
+              ) : (
+                <motion.button
+                  whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                  onClick={handleAcknowledge}
+                  className="w-full py-2.5 rounded-xl bg-[oklch(0.65_0.18_240_/_0.4)] border border-[oklch(0.65_0.18_240_/_0.5)] text-white font-bold   
+  text-sm"
+                >
+                  I'm OK — Cancel EMS
+                </motion.button>
+              )
+            }
+          </motion.div>
+        )}
+      </AnimatePresence>
+    )
+  }
+
+  Add    inside  src/app/layout.tsx.
+
+  ════════════════════════════════════════════════════════════════════
+  NAVIGATION  (src/components/nav/sidebar.tsx — CREATE or ENHANCE)
+  ════════════════════════════════════════════════════════════════════
+  'use client'
+  import Link from 'next/link'
+  import { usePathname } from 'next/navigation'
+  import { motion } from 'framer-motion'
+  import { Activity, FileText, Server, Play, LayoutDashboard, Shield } from 'lucide-react'
+
+  const NAV_ITEMS = [
+    { href: '/dashboard',     label: 'Dashboard',     icon: LayoutDashboard },
+    { href: '/simulator',     label: 'Simulator',     icon: Play },
+    { href: '/audit',         label: 'Audit Trail',   icon: FileText },
+    { href: '/system-health', label: 'System Health', icon: Server },
+  ]
+
+  export function Sidebar() {
+    const pathname = usePathname()
+    return (
+      <aside className="fixed left-0 top-0 h-full w-56 z-40 flex flex-col
+                        bg-[oklch(0.18_0.05_165_/_0.85)] backdrop-blur-2xl
+                        border-r border-[oklch(1_0_0_/_0.06)]">
+        {/* Logo */}
+        <div className="flex items-center gap-2.5 px-5 py-5 border-b border-[oklch(1_0_0_/_0.06)]">
+          <div className="p-1.5 rounded-xl bg-[oklch(0.72_0.17_145_/_0.25)]">
+            <Shield className="w-5 h-5 text-[oklch(0.72_0.17_145)]" />
+          </div>
+          <span className="font-black text-[oklch(0.93_0.03_85)] tracking-widest text-sm">SENTINEL</span>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 p-3 space-y-1">
+          {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+            const active = pathname.startsWith(href)
+            return (
+              <Link key={href} href={href}>
+                <motion.div
+                  whileHover={{ x: 3 }}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    active
+                      ? 'bg-[oklch(0.72_0.17_145_/_0.2)] text-[oklch(0.93_0.03_85)] border border-[oklch(0.72_0.17_145_/_0.3)]'
+                      : 'text-[oklch(0.50_0.03_165)] hover:text-[oklch(0.85_0.06_100)] hover:bg-[oklch(1_0_0_/_0.04)]'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 ${active ? 'text-[oklch(0.72_0.17_145)]' : ''}`} />
+                  {label}
+                  {active && (
+                    <motion.div
+                      layoutId="nav-indicator"
+                      className="ml-auto w-1.5 h-1.5 rounded-full bg-[oklch(0.72_0.17_145)]"
+                    />
+                  )}
+                </motion.div>
+              </Link>
+            )
+          })}
+        </nav>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-[oklch(1_0_0_/_0.06)]">
+          <p className="text-xs text-[oklch(0.35_0.03_165)] text-center">v1.0.0 · Clinical Agent</p>
+        </div>
+      </aside>
+    )
+  }
+
+  In  src/app/layout.tsx  add    and wrap main content area with  pl-56  padding on pages that need it.
+
+  ════════════════════════════════════════════════════════════════════
+  UPDATED layout.tsx — COMPLETE
+  ════════════════════════════════════════════════════════════════════
+  import type { Metadata } from 'next'
+  import { Inter } from 'next/font/google'
+  import './globals.css'
+  import { NeuralCanvas } from '@/components/background/neural-canvas'
+  import { PageTransition } from '@/components/motion/page-transition'
+  import { Sidebar } from '@/components/nav/sidebar'
+  import { CriticalOverlay } from '@/components/overlays/critical-overlay'
+  import { FallOverlay } from '@/components/overlays/fall-overlay'
+
+  const inter = Inter({ subsets: ['latin'] })
+
+  export const metadata: Metadata = {
+    title: 'SENTINEL — Clinical Escalation Agent',
+    description: 'AI-powered patient monitoring and escalation system',
+  }
+
+  export default function RootLayout({ children }: { children: React.ReactNode }) {
+    return (
+      <html lang="en" suppressHydrationWarning>
+        <body className={`${inter.className} bg-[oklch(0.15_0.04_165)] text-[oklch(0.93_0.03_85)] overflow-x-hidden`}>
+          {/* Layer 0: Neural particle canvas */}
+          <NeuralCanvas />
+
+          {/* Layer 1: Sidebar nav */}
+          <Sidebar />
+
+          {/* Layer 2: Page content */}
+          <main className="pl-56 min-h-screen relative" style={{ zIndex: 1 }}>
+            <PageTransition>
+              {children}
+            </PageTransition>
+          </main>
+
+          {/* Layer 3: Overlays */}
+          <CriticalOverlay />
+          <FallOverlay />
+        </body>
+      </html>
+    )
+  }
+
+  ════════════════════════════════════════════════════════════════════
+  EXISTING COMPONENT ENHANCEMENTS
+  ════════════════════════════════════════════════════════════════════
+
+  ── vital-card.tsx: Wrap each card with GlassCard + whileHover + motion.p for value changes ──
+  Add  import { motion } from 'framer-motion'  and  import { GlassCard } from '@/components/ui/glass-card'
+  Wrap the card root with  <GlassCard glow={isAbnormal ? 'amber' : 'none'}>
+  Wrap the numeric value with:
+    <motion.span key={value} initial={{ scale: 1.3, color: '#ef4444' }} animate={{ scale: 1, color: 'inherit' }} transition={{ duration: 0.5 }}>        
+      {value}
+    </motion.span>
+
+  ── risk-gauge.tsx: Already uses ApexCharts — add glowing drop-shadow to the chart container ──
+    style={{ filter: drop-shadow(0 0 ${score}px oklch(0.65 0.22 25 / 0.6)) }}
+
+  ── emergency-alert.tsx: Add framer-motion AnimatePresence slide-down animation ──
+    Wrap alert in:  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} ...>
+
+  ── decision-log.tsx: Wrap each entry in <motion.div layout initial={{ opacity:0, x:-10 }} animate={{ opacity:1, x:0 }}> ──
+
+  ── ecg-strip.tsx: Add glowing stroke effect ──
+    SVG path stroke: 'oklch(0.72 0.17 145)'
+    SVG filter:
+    Apply: <path filter="url(#ecg-glow)" ...>
+
+  ════════════════════════════════════════════════════════════════════
+  MOCK DATA (offline demo)
+  ════════════════════════════════════════════════════════════════════
+
+  Create  src/lib/mock-sentinel-data.ts:
+  export const MOCK_XAI_DATA = {
+    finalScore: 78.4,
+    shalBand: 'HIGH',
+    sl1Points: 18.2,
+    sl2Points: 4.5,
+    sl3Points: 25.0,
+    sl4Points: 12.0,
+    sl5Points: 8.3,
+    vitalTriggers: [
+      { name: 'Heart Rate',  value: 112, threshold: 100, delta: 12 },
+      { name: 'SpO₂',        value: 91,  threshold: 95,  delta: -4 },
+      { name: 'Resp Rate',   value: 24,  threshold: 20,  delta: 4  },
+      { name: 'Temperature', value: 38.7,threshold: 38,  delta: 0.7 },
+    ],
+    syndromes: ['HYPOXIC_RESPIRATORY', 'EARLY_SEPSIS'],
+    trends: ['HR Ascent (>10 bpm/5min)', 'SpO₂ Decline (>3%/5min)', 'Fever Trajectory'],
+    differentials: [
+      { diagnosis: 'Pneumonia / LRTI',      probability: 0.72 },
+      { diagnosis: 'Pulmonary Embolism',    probability: 0.41 },
+      { diagnosis: 'Sepsis (early)',        probability: 0.38 },
+      { diagnosis: 'COPD Exacerbation',     probability: 0.27 },
+    ],
+    reasoning: 'Patient P001 presents with concurrent SpO₂ suppression to 91% alongside tachycardia (112 bpm) and tachypnoea (24/min). Temporal trends  
+  show a 12 bpm HR ascent and 4% SpO₂ decline over the last 5-minute window. HYPOXIC_RESPIRATORY and EARLY_SEPSIS syndromes co-fired in SL3. Isolation  
+  Forest anomaly score 0.71 suggests deviation from baseline. Differential confidence weighted toward lower respiratory tract infection with pneumonia  
+  as primary hypothesis. Urgent clinical review recommended.',
+    confidence: 0.78,
+  }
+
+  In  XAIPanel  and  Dashboard, fall back to  MOCK_XAI_DATA  if no live data is available.
+
+  ════════════════════════════════════════════════════════════════════
+  QUALITY REQUIREMENTS — NON-NEGOTIABLE
+  ════════════════════════════════════════════════════════════════════
+  1. Every page must render the NeuralCanvas particle field (800 particles, connecting lines, hex grid overlay)
+  2. Every card must be a GlassCard with backdrop-blur-xl + 55% opacity deep-forest background
+  3. All numbers that change (HR, SpO₂, score) must use motion.span with a flash animation
+  4. All list items must stagger-animate in using StaggerList/StaggerItem
+  5. All page changes must use the PageTransition fade-blur animation
+  6. The RiskOrb 3D sphere must change colour based on risk score (green→amber→red) and distort faster at higher scores
+  7. The CriticalOverlay must use a pulsing red backdrop + spring-animated alert card
+  8. The FallOverlay countdown bar must animate in real-time
+  9. The NarrativeSummary typewriter must restart on every new reasoning text
+  10. No white backgrounds anywhere — all surfaces use oklch deep forest or transparent glass
+  11. All text must use the oklch colour tokens — never hex or rgb values for colour
+  12. The Sidebar nav indicator must use Framer Motion layoutId for shared-layout transitions
+  13. ECG strip must have the green glow SVG filter applied
+  14. Charts (Score Waterfall, differential bars) must animate in (initial width=0, animate to value)
+  15. Run  npm install framer-motion @react-three/fiber @react-three/drei three @types/three  first
+
+  ════════════════════════════════════════════════════════════════════
+  FILE TREE SUMMARY — ALL FILES TO CREATE/MODIFY
+  ════════════════════════════════════════════════════════════════════
+  CREATE:
+    src/components/background/neural-canvas.tsx
+    src/components/3d/risk-orb.tsx
+    src/components/3d/health-map.tsx
+    src/components/motion/page-transition.tsx
+    src/components/motion/stagger-list.tsx
+    src/components/ui/glass-card.tsx
+    src/components/nav/sidebar.tsx
+    src/components/overlays/critical-overlay.tsx
+    src/components/overlays/fall-overlay.tsx
+    src/components/xai/xai-panel.tsx
+    src/lib/sentinel-api.ts
+    src/lib/mock-sentinel-data.ts
+    src/hooks/use-sentinel-ws.ts
+    src/app/audit/page.tsx
+    src/app/system-health/page.tsx
+    .env.local
+
+  MODIFY:
+    src/app/layout.tsx              — add NeuralCanvas, Sidebar, PageTransition, overlays
+    src/app/dashboard/page.tsx      — full premium rewrite with 3D orb + XAI panel
+    src/app/simulator/page.tsx      — wrap with glass layout
+    src/components/vitals/vital-card.tsx     — add GlassCard + motion value flash
+    src/components/vitals/risk-gauge.tsx     — add glow drop-shadow
+    src/components/vitals/emergency-alert.tsx — add AnimatePresence slide
+    src/components/vitals/decision-log.tsx   — add motion layout animations
+    src/components/vitals/ecg-strip.tsx      — add SVG glow filter
