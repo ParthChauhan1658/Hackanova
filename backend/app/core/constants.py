@@ -224,11 +224,16 @@ SENDGRID_FROM_EMAIL_ENV: str = "SENDGRID_FROM_EMAIL"
 FIREBASE_CREDENTIALS_JSON_ENV: str = "FIREBASE_CREDENTIALS_JSON"
 FCM_DEVICE_TOKEN_KEY: str = "device:{patient_id}:fcm_token"
 
-# Cal.com
+# Calendly
+CALENDLY_API_TOKEN_ENV: str = "CALENDLY_API_TOKEN"
+CALENDLY_EVENT_TYPE_URI_ENV: str = "CALENDLY_EVENT_TYPE_URI"
+CALENDLY_API_BASE: str = "https://api.calendly.com"
+APPOINTMENT_RETRY_DELAY_SECONDS: float = 60.0
+
+# Cal.com (kept for backwards-compat — no longer used by default)
 CAL_COM_API_KEY_ENV: str = "CAL_COM_API_KEY"
 CAL_COM_EVENT_TYPE_ID_ENV: str = "CAL_COM_EVENT_TYPE_ID"
 CAL_COM_API_BASE: str = "https://api.cal.com/v2"
-APPOINTMENT_RETRY_DELAY_SECONDS: float = 60.0
 
 # Fall protocol
 FALL_STATE_KEY: str = "fall:{patient_id}:state"

@@ -50,8 +50,7 @@ class BookAppointmentRequest(BaseModel):
     patient_email: str
     reason: str
     notes: str = ""
-    minutes_from_now: int = 60
-    event_type_id: Optional[int] = None  # if provided, overrides CAL_COM_EVENT_TYPE_ID env var
+    event_type_uri: Optional[str] = None  # Calendly event type URI; falls back to CALENDLY_EVENT_TYPE_URI env var
 
 
 # ── contacts ───────────────────────────────────────────────────────────────────
@@ -211,110 +210,111 @@ async def test_email(body: TestEmailRequest):
 
 @router.post("/book-appointment")
 async def book_appointment(body: BookAppointmentRequest):
-    """Book an appointment via Cal.com REST API."""
-    from datetime import datetime, timedelta, timezone
-    from app.core.constants import CAL_COM_API_BASE, CAL_COM_API_KEY_ENV, CAL_COM_EVENT_TYPE_ID_ENV
+    """Create a Calendly scheduling link and return the booking URL to the caller."""
+    from urllib.parse import quote
+    from app.core.constants import CALENDLY_API_TOKEN_ENV, CALENDLY_EVENT_TYPE_URI_ENV, CALENDLY_API_BASE
 
-    api_key = os.getenv(CAL_COM_API_KEY_ENV, "")
-    evt_id  = os.getenv(CAL_COM_EVENT_TYPE_ID_ENV, "")
+    api_token = os.getenv(CALENDLY_API_TOKEN_ENV, "")
+    if not api_token:
+        return {"status": "error", "detail": "Calendly API token (CALENDLY_API_TOKEN) not configured in .env"}
 
-    if not api_key:
-        return {"status": "error", "detail": "Cal.com API key not configured in .env"}
+    event_type_uri = body.event_type_uri or os.getenv(CALENDLY_EVENT_TYPE_URI_ENV, "")
+    if not event_type_uri:
+        return {
+            "status": "error",
+            "detail": "No event_type_uri provided and CALENDLY_EVENT_TYPE_URI not set in .env. "
+                      "Fetch /api/v1/settings/calendly-event-types first.",
+        }
 
-    # Use event_type_id from request body if provided, else fall back to env var
-    resolved_evt_id = body.event_type_id or (int(evt_id) if evt_id else None)
-    if not resolved_evt_id:
-        return {"status": "error", "detail": "No event_type_id provided and CAL_COM_EVENT_TYPE_ID not set in .env. Fetch /api/v1/settings/cal-event-types first."}
-
-    slot_start = datetime.now(timezone.utc) + timedelta(minutes=body.minutes_from_now)
-    notes_text = f"Reason: {body.reason}"
-    if body.notes:
-        notes_text += f"\n\nAdditional notes: {body.notes}"
-
-    # Cal.com v2 API (2024-08-13): uses "attendee" + optional "bookingFieldsResponses"
-    # (the old "responses" key was removed in this version)
-    payload: dict = {
-        "eventTypeId": resolved_evt_id,
-        "start": slot_start.isoformat(),
-        "attendee": {
-            "name":     body.patient_name,
-            "email":    body.patient_email,
-            "timeZone": "Asia/Kolkata",
-            "language": "en",
-        },
-        "metadata": {
-            "sentinel_patient_id": body.patient_id,
-            "booked_via":          "SENTINEL Settings Panel",
-            "reason":              body.reason,
-        },
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
     }
-    if body.notes:
-        payload["bookingFieldsResponses"] = {"notes": body.notes}
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
-                f"{CAL_COM_API_BASE}/bookings",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "cal-api-version": "2024-08-13",
-                    "Content-Type": "application/json",
+                f"{CALENDLY_API_BASE}/scheduling_links",
+                json={
+                    "max_event_count": 1,
+                    "owner":      event_type_uri,
+                    "owner_type": "EventType",
                 },
+                headers=headers,
             )
             if resp.status_code >= 400:
-                logger.warning("Cal.com booking HTTP %s: %s", resp.status_code, resp.text)
+                logger.warning("Calendly scheduling_links HTTP %s: %s", resp.status_code, resp.text)
                 return {"status": "error", "detail": f"HTTP {resp.status_code}: {resp.text}"}
             data = resp.json()
-        booking_data = data.get("data", data)
-        uid = str(booking_data.get("uid") or booking_data.get("id") or "created")
+
+        booking_url = data["resource"]["booking_url"]
+        # Pre-fill patient name and email via Calendly URL parameters
+        booking_url += f"?name={quote(body.patient_name)}&email={quote(body.patient_email)}"
+        if body.reason:
+            booking_url += f"&a1={quote(body.reason)}"
+
+        logger.info(
+            "Calendly scheduling link created for patient %s — %s",
+            body.patient_id, booking_url,
+        )
         return {
-            "status":     "booked",
-            "booking_id": uid,
-            "start":      slot_start.isoformat(),
-            "patient":    body.patient_name,
+            "status":      "scheduled",
+            "booking_url": booking_url,
+            "patient":     body.patient_name,
         }
     except Exception as exc:
-        logger.warning("Manual appointment booking failed: %s", exc)
+        logger.warning("Calendly booking link creation failed: %s", exc)
         return {"status": "error", "detail": str(exc)}
 
 
-# ── Cal.com event types ─────────────────────────────────────────────────────────
+# ── Calendly event types ────────────────────────────────────────────────────────
 
-@router.get("/cal-event-types")
-async def get_cal_event_types():
-    """Fetch available event types from Cal.com — used by frontend appointment picker."""
-    from app.core.constants import CAL_COM_API_BASE, CAL_COM_API_KEY_ENV
+@router.get("/calendly-event-types")
+async def get_calendly_event_types():
+    """Fetch active event types from Calendly — used by frontend appointment picker."""
+    from app.core.constants import CALENDLY_API_TOKEN_ENV, CALENDLY_API_BASE
 
-    api_key = os.getenv(CAL_COM_API_KEY_ENV, "")
-    if not api_key:
-        return {"status": "error", "detail": "Cal.com API key not configured in .env", "event_types": []}
+    api_token = os.getenv(CALENDLY_API_TOKEN_ENV, "")
+    if not api_token:
+        return {"status": "error", "detail": "Calendly API token (CALENDLY_API_TOKEN) not configured in .env", "event_types": []}
+
+    headers = {"Authorization": f"Bearer {api_token}"}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{CAL_COM_API_BASE}/event-types",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "cal-api-version": "2024-08-13",
-                },
+            # Step 1: get current user URI
+            me_resp = await client.get(f"{CALENDLY_API_BASE}/users/me", headers=headers)
+            if me_resp.status_code >= 400:
+                logger.warning("Calendly /users/me HTTP %s: %s", me_resp.status_code, me_resp.text)
+                return {
+                    "status": "error",
+                    "detail": f"Calendly auth failed — HTTP {me_resp.status_code}. Check your CALENDLY_API_TOKEN.",
+                    "event_types": [],
+                }
+            user_uri = me_resp.json()["resource"]["uri"]
+
+            # Step 2: list active event types for this user
+            et_resp = await client.get(
+                f"{CALENDLY_API_BASE}/event_types",
+                params={"user": user_uri, "active": "true"},
+                headers=headers,
             )
-            if resp.status_code >= 400:
-                logger.warning("Cal.com event-types HTTP %s: %s", resp.status_code, resp.text)
-                return {"status": "error", "detail": f"HTTP {resp.status_code}: {resp.text}", "event_types": []}
-            data = resp.json()
-            raw = data.get("data", [])
-            # data may be a list or dict with eventTypeGroups
-            event_types = []
-            if isinstance(raw, list):
-                event_types = raw
-            elif isinstance(raw, dict):
-                for grp in raw.get("eventTypeGroups", []):
-                    event_types.extend(grp.get("eventTypes", []))
+            if et_resp.status_code >= 400:
+                logger.warning("Calendly /event_types HTTP %s: %s", et_resp.status_code, et_resp.text)
+                return {"status": "error", "detail": f"HTTP {et_resp.status_code}: {et_resp.text}", "event_types": []}
+
+            items = et_resp.json().get("collection", [])
             simplified = [
-                {"id": et.get("id"), "title": et.get("title", ""), "length": et.get("length", 30), "slug": et.get("slug", "")}
-                for et in event_types if et.get("id")
+                {
+                    "uri":      et["uri"],
+                    "name":     et.get("name", ""),
+                    "duration": et.get("duration", 30),
+                    "slug":     et.get("slug", ""),
+                    "color":    et.get("color", ""),
+                }
+                for et in items
             ]
             return {"status": "ok", "event_types": simplified}
     except Exception as exc:
-        logger.warning("Cal.com event-types fetch failed: %s", exc)
+        logger.warning("Calendly event-types fetch failed: %s", exc)
         return {"status": "error", "detail": str(exc), "event_types": []}

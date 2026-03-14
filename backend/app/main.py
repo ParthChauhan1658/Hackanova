@@ -206,6 +206,6 @@ async def health(request: Request):
         "database":         "configured" if os.getenv("DATABASE_URL") else "default_url",
         "twilio":           "configured" if os.getenv("TWILIO_ACCOUNT_SID") else "missing_key",
         "sendgrid":         "configured" if os.getenv("RESEND_API_KEY") else "missing_key",
-        "cal_com":          "configured" if os.getenv("CAL_COM_API_KEY") else "missing_key",
+        "calendly":         "configured" if os.getenv("CALENDLY_API_TOKEN") else "missing_key",
         "ems":              "mock" if not os.getenv("EMS_API_URL") else "configured",
     }
